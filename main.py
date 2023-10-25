@@ -11,7 +11,7 @@ import threading
 
 
 
-window_size = 20
+window_size = 50
 data_points = 1000
 
 
@@ -94,13 +94,17 @@ if __name__ == '__main__':
     x = np.linspace(0, data_points - 1, data_points)
     y = np.zeros(data_points, dtype=np.int32)
     y_filtered = np.zeros(data_points, dtype=np.int32)
+    y_RMS =  np.zeros(data_points, dtype=np.int64)
+    y_MAV = np.zeros(data_points, dtype=np.int32)
     y_index = 0
 
     fig = plt.figure(figsize=(20,12))
     ax = fig.add_subplot(1,1,1) # hier größe festlegen
     (ln,) = ax.plot(x, y, animated=True)
     (ln_filtered,) = ax.plot(x, y_filtered, label='Filtered Data', animated=True)
-    ax.set_ylim(750, 1750)
+    (ln_RMS,) = ax.plot(x, y_RMS, label='RMS Data', animated=True)
+    (ln_MAV,) = ax.plot(x, y_MAV, label='MAV Data', animated=True)
+    ax.set_ylim(-1000, 1750)
 
     plt.legend()
     # fig, axs = plt.subplots(2, 1, figsize=(16, 9), gridspec_kw={'height_ratios': [1, 2]})
@@ -112,6 +116,8 @@ if __name__ == '__main__':
     bg = fig.canvas.copy_from_bbox(fig.bbox)
     ax.draw_artist(ln)
     ax.draw_artist(ln_filtered)
+    ax.draw_artist(ln_RMS)
+    ax.draw_artist(ln_MAV)
     fig.canvas.blit(fig.bbox)
 
     # Define a lock for synchronization
@@ -119,18 +125,29 @@ if __name__ == '__main__':
 
 
     def read_data():
-        global y, y_filtered, y_index
+        global y, y_filtered, y_index, y_RMS, y_MAV
         while True:
             new_data = int.from_bytes(ser.read(4), byteorder='little', signed=True)
             new_average = round(np.sum(y[0: window_size]) / window_size, 2)
-            print(new_data)
+            new_RMS = round(np.sqrt(np.sum(np.square(y[0: window_size])) / window_size), 2)
+            new_MAV = round(np.sum(abs(y[0: window_size])) / window_size, 2)
+
+
+            print(new_average)
 
 
             with data_lock:
                 y = np.roll(y,1)
                 y[0] = new_data
+
                 y_filtered = np.roll(y_filtered,1)
                 y_filtered[0] = new_average
+
+                y_RMS = np.roll(y_RMS,1)
+                y_RMS[0] = new_RMS
+
+                y_MAV = np.roll(y_MAV,1)
+                y_MAV[0] = new_MAV
                 #y[y_index] = new_data
                 #y_index = (y_index + 1) % data_points
 
@@ -143,8 +160,12 @@ if __name__ == '__main__':
         fig.canvas.restore_region(bg)
         ln.set_ydata(y)
         ln_filtered.set_ydata(y_filtered)
+        ln_RMS.set_ydata(y_RMS)
+        ln_MAV.set_ydata(y_MAV)
         ax.draw_artist(ln)
         ax.draw_artist(ln_filtered)
+        ax.draw_artist(ln_RMS)
+        ax.draw_artist(ln_MAV)
         fig.canvas.blit(fig.bbox)
         fig.canvas.flush_events()
 
