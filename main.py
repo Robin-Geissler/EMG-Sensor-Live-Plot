@@ -1,4 +1,5 @@
 # This is a sample Python script.
+import sys
 
 # Press Umschalt+F10 to execute it or replace it with your code.
 # Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
@@ -8,6 +9,12 @@ import serial
 import numpy as np
 import matplotlib.pyplot as plt
 import threading
+import atexit
+import csv
+import time
+import os
+
+from pynput.keyboard import Key, Listener
 
 
 
@@ -15,15 +22,32 @@ window_size = 50
 window_size_SLOW = 10000
 data_points = 1000
 SLOW_count = 0
+THREAD_CLOSE = False
 
 def print_hi(name):
     # Use a breakpoint in the code line below to debug your script.
     print(f'Hi, {name}')  # Press Strg+F8 to toggle the breakpoint.
 
+def exit_csv_close():
+    global csv_file, THREAD_CLOSE
+    THREAD_CLOSE = True
+    time.sleep(1)
+    csv_file.close()
+
+# def on_release(key):
+#     if key == Key.esc:
+#         print('Exiting...')
+#         sys.exit()
+
+ # with Listener(on_release=on_release) as listener:
+    #     listener.join()
+
 def read_data():
     global y, y_filtered, y_RMS, y_MAV
     global y_filtered_SLOW, y_RMS_SLOW_LARGE_FILTER, y_RMS_SLOW, y_MAV_SLOW
     global SLOW_count
+    global start_time
+
     while True:
         new_data = int.from_bytes(ser.read(4), byteorder='little', signed=True)
 
@@ -39,6 +63,7 @@ def read_data():
         with data_lock:
             y = np.roll(y,1)
             y[0] = new_data
+            writer.writerow([str(time.time() - start_time), str(new_data)])
 
             y_filtered = np.roll(y_filtered,1)
             y_filtered[0] = new_average
@@ -67,6 +92,9 @@ def read_data():
                 y_RMS_SLOW_LARGE_FILTER[0] = new_RMS_LARGE_FILTER
         else:
             SLOW_count = SLOW_count + 1
+        if THREAD_CLOSE:
+            return
+
 
 
 # Press the green button in the gutter to run the script.
@@ -77,9 +105,9 @@ if __name__ == '__main__':
     ser = serial.Serial(port='COM3', baudrate=115200)
     print('configured')
 
-#######################################################################################################################
-    # Fast plot preparation
-#######################################################################################################################
+    #######################################################################################################################
+        # Fast plot preparation
+    #######################################################################################################################
 
 
     x = np.linspace(0, data_points - 1, data_points)
@@ -96,9 +124,9 @@ if __name__ == '__main__':
     (ln_MAV,) = ax.plot(x, y_MAV, label='MAV Data', animated=True)
     ax.set_ylim(-500, 750)
 
-    #######################################################################################################################
-    # Slow plot preparation
-    #######################################################################################################################
+#######################################################################################################################
+# Slow plot preparation
+#######################################################################################################################
     x_SLOW = np.linspace(0, data_points - 1, data_points)
     y_filtered_SLOW = np.zeros(data_points, dtype=np.int32)
     y_RMS_SLOW = np.zeros(data_points, dtype=np.int64)
@@ -114,9 +142,9 @@ if __name__ == '__main__':
 
     ax_SLOW.set_ylim(-20, 250)
 
-    #######################################################################################################################
-    # Draw plots
-    #######################################################################################################################
+#######################################################################################################################
+# Draw plots
+#######################################################################################################################
     plt.legend()
 
     plt.show(block=False)
@@ -137,9 +165,20 @@ if __name__ == '__main__':
     fig.canvas.blit(fig.bbox)
     fig_SLOW.canvas.blit(fig_SLOW.bbox)
 
-    #######################################################################################################################
-    # Thread setup
-    #######################################################################################################################
+#######################################################################################################################
+# Prepare CSV File
+#######################################################################################################################
+    csv_file = open('readings.csv', 'w')
+    writer = csv.writer(csv_file)
+    atexit.register(exit_csv_close)
+
+
+    writer.writerow(['time', 'y'])
+    start_time = time.time()
+
+#######################################################################################################################
+# Thread setup
+#######################################################################################################################
 
     # Define a lock for synchronization
     data_lock = threading.Lock()
@@ -147,6 +186,10 @@ if __name__ == '__main__':
     data_thread = threading.Thread(target=read_data)
     data_thread.daemon = True
     data_thread.start()
+
+
+
+
 
     while True:
         fig.canvas.restore_region(bg)
