@@ -12,6 +12,7 @@ import threading
 import atexit
 import csv
 import time
+from statistics import mean
 import os
 
 from pynput.keyboard import Key, Listener
@@ -22,7 +23,10 @@ window_size = 50
 window_size_SLOW = 10000
 data_points = 1000
 SLOW_count = 0
+"""" Sampling Frequeny in Hz"""
+fs = 1000
 THREAD_CLOSE = False
+LOCK_MEAN_FREQ = False
 
 def print_hi(name):
     # Use a breakpoint in the code line below to debug your script.
@@ -42,37 +46,79 @@ def exit_csv_close():
  # with Listener(on_release=on_release) as listener:
     #     listener.join()
 
+def calc_mean_freq(y,fs):
+    global mean_freq
+    spec = np.abs(np.fft.rfft(y))
+    freq = np.fft.rfftfreq(len(y), d=1 / fs)
+    amp = spec / spec.sum()
+    mean_freq = (freq * amp).sum()
+    print(str(mean_freq))
+
+def calc_avg(y,window_size):
+    global avg
+    avg = round(np.sum(y[0: window_size]) / window_size, 2)
+
+def calc_rms(y, window_size):
+    global rms
+    rms = round(np.sqrt(np.sum(np.square(y[0: window_size])) / window_size), 2)
+
+
+def calc_rms_slow(y, window_size):
+    global rms_slow
+    rms_slow = round(np.sqrt(np.sum(np.square(y[0: window_size])) / window_size), 2)
+
+def calc_mav(y, window_size):
+    global mav
+    mav = round(np.sum(abs(y[0: window_size])) / window_size, 2)
+
+
 def read_data():
     global y, y_filtered, y_RMS, y_MAV
     global y_filtered_SLOW, y_RMS_SLOW_LARGE_FILTER, y_RMS_SLOW, y_MAV_SLOW
+    global avg_thread,rms_thread,rms_slow_thread, mav_thread, mean_freq_thread
+    global avg, rms, rms_slow, mav, mean_freq
     global SLOW_count
     global start_time
 
     while True:
         new_data = int.from_bytes(ser.read(4), byteorder='little', signed=True)
 
-        new_average = round(np.sum(y[0: window_size]) / window_size, 2)
-        new_RMS = round(np.sqrt(np.sum(np.square(y[0: window_size])) / window_size), 2)
-        new_MAV = round(np.sum(abs(y[0: window_size])) / window_size, 2)
-        new_RMS_LARGE_FILTER = round(np.sqrt(np.sum(np.square(y[0: window_size_SLOW])) / window_size_SLOW), 2)
-
-
-        print(new_average)
-
-
         with data_lock:
             y = np.roll(y,1)
             y[0] = new_data
             writer.writerow([str(time.time() - start_time), str(new_data)])
 
+        """ time and frquency domain threads will be used by data_thread """
+        """ time domain calculations"""
+        avg_thread = threading.Thread(target=calc_avg, daemon=True, args=(y, window_size))
+        avg_thread.start()
+        rms_thread = threading.Thread(target=calc_rms, daemon=True, args=(y, window_size))
+        rms_thread.start()
+        rms_slow_thread = threading.Thread(target=calc_rms_slow, daemon=True, args=(y, window_size_SLOW))
+        rms_slow_thread.start()
+        mav_thread = threading.Thread(target=calc_mav, daemon=True, args=(y, window_size))
+        mav_thread.start()
+        """ frequency domain calculations """
+        mean_freq_thread = threading.Thread(target=calc_mean_freq, daemon=True, args=(y, fs))
+        mean_freq_thread.start()
+
+
+        #print(new_average)
+
+
+
+        with data_lock:
             y_filtered = np.roll(y_filtered,1)
-            y_filtered[0] = new_average
+            avg_thread.join()
+            y_filtered[0] = avg
 
             y_RMS = np.roll(y_RMS,1)
-            y_RMS[0] = new_RMS
+            rms_thread.join()
+            y_RMS[0] = rms
 
             y_MAV = np.roll(y_MAV,1)
-            y_MAV[0] = new_MAV
+            mav_thread.join()
+            y_MAV[0] = mav
 
 
 
@@ -80,16 +126,17 @@ def read_data():
             SLOW_count = 0
             with data_lock:
                 y_filtered_SLOW = np.roll(y_filtered_SLOW,1)
-                y_filtered_SLOW[0] = new_average
+                y_filtered_SLOW[0] = avg
 
                 y_RMS_SLOW = np.roll(y_RMS_SLOW,1)
-                y_RMS_SLOW[0] = new_RMS
+                y_RMS_SLOW[0] = rms
 
                 y_MAV_SLOW = np.roll(y_MAV_SLOW,1)
-                y_MAV_SLOW[0] = new_MAV
+                y_MAV_SLOW[0] = mav
 
                 y_RMS_SLOW_LARGE_FILTER = np.roll(y_RMS_SLOW_LARGE_FILTER, 1)
-                y_RMS_SLOW_LARGE_FILTER[0] = new_RMS_LARGE_FILTER
+                rms_slow_thread.join()
+                y_RMS_SLOW_LARGE_FILTER[0] = rms_slow
         else:
             SLOW_count = SLOW_count + 1
         if THREAD_CLOSE:
@@ -111,13 +158,16 @@ if __name__ == '__main__':
 
 
     x = np.linspace(0, data_points - 1, data_points)
+
     y = np.zeros(data_points, dtype=np.int32)
     y_filtered = np.zeros(data_points, dtype=np.int32)
-    y_RMS =  np.zeros(data_points, dtype=np.int64)
+    y_RMS = np.zeros(data_points, dtype=np.int64)
     y_MAV = np.zeros(data_points, dtype=np.int32)
 
-    fig = plt.figure(figsize=(20,12))
-    ax = fig.add_subplot(1,1,1) # hier größe festlegen
+
+    fig = plt.figure(figsize=(20, 12))
+    ax = fig.add_subplot(1, 1, 1)  # hier größe festlegen
+
     (ln,) = ax.plot(x, y, animated=True)
     (ln_filtered,) = ax.plot(x, y_filtered, label='Filtered Data', animated=True)
     (ln_RMS,) = ax.plot(x, y_RMS, label='RMS Data', animated=True)
@@ -133,12 +183,15 @@ if __name__ == '__main__':
     y_RMS_SLOW_LARGE_FILTER = np.zeros(data_points, dtype=np.int64)
     y_MAV_SLOW = np.zeros(data_points, dtype=np.int32)
 
+    y_mean_freq_slow = np.zeros(data_points, dtype=np.int32)
+
     fig_SLOW = plt.figure(figsize=(20, 12))
     ax_SLOW = fig_SLOW.add_subplot(1, 1, 1)  # hier größe festlegen
     (ln_filtered_SLOW,) = ax_SLOW.plot(x_SLOW, y_filtered_SLOW, label='Filtered Data', animated=True)
     (ln_RMS_SLOW,) = ax_SLOW.plot(x_SLOW, y_RMS_SLOW, label='RMS Data', animated=True)
     (ln_RMS_SLOW_LARGE_FILTER,) = ax_SLOW.plot(x_SLOW, y_RMS_SLOW_LARGE_FILTER, label='RMS Data Filtered', animated=True)
     (ln_MAV_SLOW,) = ax_SLOW.plot(x_SLOW, y_MAV_SLOW, label='MAV Data', animated=True)
+    (ln_mean_freq_slow,) = ax_SLOW.plot(x_SLOW, y_mean_freq_slow, label='Mean Freq', animated=True)
 
     ax_SLOW.set_ylim(-20, 250)
 
@@ -161,6 +214,7 @@ if __name__ == '__main__':
     ax_SLOW.draw_artist(ln_RMS_SLOW)
     ax_SLOW.draw_artist(ln_MAV_SLOW)
     ax_SLOW.draw_artist(ln_RMS_SLOW_LARGE_FILTER)
+    ax_SLOW.draw_artist(ln_mean_freq_slow)
 
     fig.canvas.blit(fig.bbox)
     fig_SLOW.canvas.blit(fig_SLOW.bbox)
@@ -179,12 +233,18 @@ if __name__ == '__main__':
 #######################################################################################################################
 # Thread setup
 #######################################################################################################################
+    avg = 0
+    rms = 0
+    rms_slow = 0
+    mav = 0
+    mean_freq = 0
+
+
 
     # Define a lock for synchronization
     data_lock = threading.Lock()
 
-    data_thread = threading.Thread(target=read_data)
-    data_thread.daemon = True
+    data_thread = threading.Thread(target=read_data, daemon=True)
     data_thread.start()
 
 
@@ -212,6 +272,7 @@ if __name__ == '__main__':
         ax_SLOW.draw_artist(ln_RMS_SLOW)
         ax_SLOW.draw_artist(ln_RMS_SLOW_LARGE_FILTER)
         ax_SLOW.draw_artist(ln_MAV_SLOW)
+        ax_SLOW.draw_artist(ln_mean_freq_slow)
 
 
 
