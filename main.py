@@ -26,7 +26,7 @@ SLOW_count = 0
 """" Sampling Frequeny in Hz"""
 fs = 1000
 THREAD_CLOSE = False
-LOCK_MEAN_FREQ = False
+
 
 def print_hi(name):
     # Use a breakpoint in the code line below to debug your script.
@@ -53,30 +53,20 @@ def calc_mean_freq(y,fs):
     amp = spec / spec.sum()
     mean_freq = (freq * amp).sum()
     print(str(mean_freq))
-
-def calc_avg(y,window_size):
-    global avg
-    avg = round(np.sum(y[0: window_size]) / window_size, 2)
-
-def calc_rms(y, window_size):
-    global rms
-    rms = round(np.sqrt(np.sum(np.square(y[0: window_size])) / window_size), 2)
+    return mean_freq
 
 
-def calc_rms_slow(y, window_size):
-    global rms_slow
-    rms_slow = round(np.sqrt(np.sum(np.square(y[0: window_size])) / window_size), 2)
 
-def calc_mav(y, window_size):
-    global mav
-    mav = round(np.sum(abs(y[0: window_size])) / window_size, 2)
+
+
+
+
+
 
 
 def read_data():
-    global y, y_filtered, y_RMS, y_MAV
+    global y, y_filtered, y_RMS, y_MAV, y_mean_freq_slow
     global y_filtered_SLOW, y_RMS_SLOW_LARGE_FILTER, y_RMS_SLOW, y_MAV_SLOW
-    global avg_thread,rms_thread,rms_slow_thread, mav_thread, mean_freq_thread
-    global avg, rms, rms_slow, mav, mean_freq
     global SLOW_count
     global start_time
 
@@ -88,36 +78,31 @@ def read_data():
             y[0] = new_data
             writer.writerow([str(time.time() - start_time), str(new_data)])
 
-        """ time and frquency domain threads will be used by data_thread """
-        """ time domain calculations"""
-        avg_thread = threading.Thread(target=calc_avg, daemon=True, args=(y, window_size))
-        avg_thread.start()
-        rms_thread = threading.Thread(target=calc_rms, daemon=True, args=(y, window_size))
-        rms_thread.start()
-        rms_slow_thread = threading.Thread(target=calc_rms_slow, daemon=True, args=(y, window_size_SLOW))
-        rms_slow_thread.start()
-        mav_thread = threading.Thread(target=calc_mav, daemon=True, args=(y, window_size))
-        mav_thread.start()
-        """ frequency domain calculations """
-        mean_freq_thread = threading.Thread(target=calc_mean_freq, daemon=True, args=(y, fs))
-        mean_freq_thread.start()
 
+        avg = round(np.sum(y[0: window_size]) / window_size, 2)
+        rms = round(np.sqrt(np.sum(np.square(y[0: window_size])) / window_size), 2)
+        rms_slow = round(np.sqrt(np.sum(np.square(y[0: window_size_SLOW])) / window_size_SLOW), 2)
+        mav = round(np.sum(abs(y[0: window_size])) / window_size, 2)
 
+        mean_freq = calc_mean_freq(y,fs)
         #print(new_average)
+
+        """ Error handling overflow"""
+        if np.isnan(rms):
+            rms = 0
+        if np.isnan(rms_slow):
+            rms_slow = 0
 
 
 
         with data_lock:
             y_filtered = np.roll(y_filtered,1)
-            avg_thread.join()
             y_filtered[0] = avg
 
             y_RMS = np.roll(y_RMS,1)
-            rms_thread.join()
             y_RMS[0] = rms
 
             y_MAV = np.roll(y_MAV,1)
-            mav_thread.join()
             y_MAV[0] = mav
 
 
@@ -135,8 +120,10 @@ def read_data():
                 y_MAV_SLOW[0] = mav
 
                 y_RMS_SLOW_LARGE_FILTER = np.roll(y_RMS_SLOW_LARGE_FILTER, 1)
-                rms_slow_thread.join()
                 y_RMS_SLOW_LARGE_FILTER[0] = rms_slow
+
+                y_mean_freq_slow = np.roll(y_mean_freq_slow,1)
+                y_mean_freq_slow[0] = mean_freq
         else:
             SLOW_count = SLOW_count + 1
         if THREAD_CLOSE:
@@ -233,11 +220,6 @@ if __name__ == '__main__':
 #######################################################################################################################
 # Thread setup
 #######################################################################################################################
-    avg = 0
-    rms = 0
-    rms_slow = 0
-    mav = 0
-    mean_freq = 0
 
 
 
