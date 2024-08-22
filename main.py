@@ -1,10 +1,3 @@
-# This is a sample Python script.
-import sys
-
-# Press Umschalt+F10 to execute it or replace it with your code.
-# Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
-
-
 import serial
 import numpy as np
 import matplotlib.pyplot as plt
@@ -12,25 +5,26 @@ import threading
 import atexit
 import csv
 import time
-from statistics import mean
-import os
-
-from pynput.keyboard import Key, Listener
 
 
-
-window_size = 50
-window_size_SLOW = 10000
+# number of points to be plotted for each channel
 data_points = 1000
-SLOW_count = 0
-"""" Sampling Frequeny in Hz"""
-fs = 1000
+# number of channels
+CHANNELS = 8
+# Flag to show if the writing thread still needs to be closed
 THREAD_CLOSE = False
 
 
-def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press Strg+F8 to toggle the breakpoint.
+# x axis
+x = np.linspace(0, data_points - 1, data_points)
+# y original value
+y_original = [np.zeros(data_points, dtype=np.float32) for _ in range(8)]
+# y processed value
+y_processed = [np.zeros(data_points, dtype=np.float32) for _ in range(8)]
+# offsets
+offset = np.zeros(8, dtype=np.float32)
+
+
 
 def exit_csv_close():
     global csv_file, THREAD_CLOSE
@@ -38,230 +32,137 @@ def exit_csv_close():
     time.sleep(1)
     csv_file.close()
 
-# def on_release(key):
-#     if key == Key.esc:
-#         print('Exiting...')
-#         sys.exit()
-
- # with Listener(on_release=on_release) as listener:
-    #     listener.join()
-
-def calc_mean_freq(y,fs):
-    global mean_freq
-    spec = np.abs(np.fft.rfft(y))
-    freq = np.fft.rfftfreq(len(y), d=1 / fs)
-    amp = spec / spec.sum()
-    mean_freq = (freq * amp).sum()
-    print(str(mean_freq))
-    return mean_freq
-
-
-
-
-
-
-
-
 
 
 def read_data():
-    global y, y_filtered, y_RMS, y_MAV, y_mean_freq_slow
-    global y_filtered_SLOW, y_RMS_SLOW_LARGE_FILTER, y_RMS_SLOW, y_MAV_SLOW
-    global SLOW_count
+    global x, y_original, y_processed
     global start_time
+    global offset
 
     while True:
-        new_data = int.from_bytes(ser.read(4), byteorder='little', signed=True)
+        databuff = np.frombuffer(ser.read(32), dtype= np.int32)
+
+        new_data = databuff[0]
+        writer.writerow([str(time.time() - start_time), str(new_data)])
 
         with data_lock:
-            y = np.roll(y,1)
-            y[0] = new_data
-            writer.writerow([str(time.time() - start_time), str(new_data)])
+            #for i, value_i in enumerate(data_i, start=1):
+
+            # Shift original measurement vales one to the right
+            y_original = np.roll(y_original, shift=1, axis=1)
+            # Fill the new first value with measurement data
+            # Scaling factor = (V_ADC in mV / ADC_RES 2^24 / AMPLIFICATIO_FACTOR)
+            y_original[:, 0] = databuff * (9000 / 16777216 / 24)
+            # Shift processed measurement vales one to the right
+            y_processed = np.roll(y_processed, shift=1, axis=1)
+            # Calculate dynamic offset over average of all currently saved data points
+            offset = np.round(np.sum(y_original[:, :data_points], axis=1) / data_points, 2)
+            # Offset measurement data
+            y_processed[:,0] = y_original[:,0] - offset
 
 
-        avg = round(np.sum(y[0: window_size]) / window_size, 2)
-        rms = round(np.sqrt(np.sum(np.square(y[0: window_size])) / window_size), 2)
-        rms_slow = round(np.sqrt(np.sum(np.square(y[0: window_size_SLOW])) / window_size_SLOW), 2)
-        mav = round(np.sum(abs(y[0: window_size])) / window_size, 2)
-
-        mean_freq = calc_mean_freq(y,fs)
-        #print(new_average)
-
-        """ Error handling overflow"""
-        if np.isnan(rms):
-            rms = 0
-        if np.isnan(rms_slow):
-            rms_slow = 0
+            #print(str(y[0]) + " --- " + str(y1[0]) + " --- " + str(y2[0]) + " --- " + str(y3[0]) + " --- " + str(y4[0]) + " --- " + str(y5[0]) + " --- " + str(y6[0]) + " --- " + str(y7[0]))
 
 
-
-        with data_lock:
-            y_filtered = np.roll(y_filtered,1)
-            y_filtered[0] = avg
-
-            y_RMS = np.roll(y_RMS,1)
-            y_RMS[0] = rms
-
-            y_MAV = np.roll(y_MAV,1)
-            y_MAV[0] = mav
-
-
-
-        if(SLOW_count > 200):
-            SLOW_count = 0
-            with data_lock:
-                y_filtered_SLOW = np.roll(y_filtered_SLOW,1)
-                y_filtered_SLOW[0] = avg
-
-                y_RMS_SLOW = np.roll(y_RMS_SLOW,1)
-                y_RMS_SLOW[0] = rms
-
-                y_MAV_SLOW = np.roll(y_MAV_SLOW,1)
-                y_MAV_SLOW[0] = mav
-
-                y_RMS_SLOW_LARGE_FILTER = np.roll(y_RMS_SLOW_LARGE_FILTER, 1)
-                y_RMS_SLOW_LARGE_FILTER[0] = rms_slow
-
-                y_mean_freq_slow = np.roll(y_mean_freq_slow,1)
-                y_mean_freq_slow[0] = mean_freq
-        else:
-            SLOW_count = SLOW_count + 1
-        if THREAD_CLOSE:
-            return
 
 
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    print_hi('PyCharm')
+    print('Starting Visualization')
 
 
-    ser = serial.Serial(port='COM3', baudrate=115200)
-    print('configured')
+    ser = serial.Serial(port='COM5', baudrate=115200)
+    print('Serial Interface Configured')
 
     #######################################################################################################################
-        # Fast plot preparation
+        # Plot preparation
     #######################################################################################################################
 
 
-    x = np.linspace(0, data_points - 1, data_points)
-
-    y = np.zeros(data_points, dtype=np.int32)
-    y_filtered = np.zeros(data_points, dtype=np.int32)
-    y_RMS = np.zeros(data_points, dtype=np.int64)
-    y_MAV = np.zeros(data_points, dtype=np.int32)
 
 
+    # Create Figure
     fig = plt.figure(figsize=(20, 12))
-    ax = fig.add_subplot(1, 1, 1)  # hier größe festlegen
 
-    (ln,) = ax.plot(x, y, animated=True)
-    (ln_filtered,) = ax.plot(x, y_filtered, label='Filtered Data', animated=True)
-    (ln_RMS,) = ax.plot(x, y_RMS, label='RMS Data', animated=True)
-    (ln_MAV,) = ax.plot(x, y_MAV, label='MAV Data', animated=True)
-    ax.set_ylim(-500, 750)
+    # Create Plots for all channels
+    ax = [fig.add_subplot(2, 4, i) for i in range(1, CHANNELS + 1)]
 
-#######################################################################################################################
-# Slow plot preparation
-#######################################################################################################################
-    x_SLOW = np.linspace(0, data_points - 1, data_points)
-    y_filtered_SLOW = np.zeros(data_points, dtype=np.int32)
-    y_RMS_SLOW = np.zeros(data_points, dtype=np.int64)
-    y_RMS_SLOW_LARGE_FILTER = np.zeros(data_points, dtype=np.int64)
-    y_MAV_SLOW = np.zeros(data_points, dtype=np.int32)
+    # Create Lines for all Plots
+    ln = [axi.plot(x, y_p, label = 'Channel ' + str(i), animated=True)[0] for i, (axi,y_p) in enumerate(zip(ax, y_processed),start=1)]
 
-    y_mean_freq_slow = np.zeros(data_points, dtype=np.int32)
+    # Set y axis and legend for all plots
+    for axi in ax:
+        axi.set_ylim(-10, 10)
+        axi.legend()
 
-    fig_SLOW = plt.figure(figsize=(20, 12))
-    ax_SLOW = fig_SLOW.add_subplot(1, 1, 1)  # hier größe festlegen
-    (ln_filtered_SLOW,) = ax_SLOW.plot(x_SLOW, y_filtered_SLOW, label='Filtered Data', animated=True)
-    (ln_RMS_SLOW,) = ax_SLOW.plot(x_SLOW, y_RMS_SLOW, label='RMS Data', animated=True)
-    (ln_RMS_SLOW_LARGE_FILTER,) = ax_SLOW.plot(x_SLOW, y_RMS_SLOW_LARGE_FILTER, label='RMS Data Filtered', animated=True)
-    (ln_MAV_SLOW,) = ax_SLOW.plot(x_SLOW, y_MAV_SLOW, label='MAV Data', animated=True)
-    (ln_mean_freq_slow,) = ax_SLOW.plot(x_SLOW, y_mean_freq_slow, label='Mean Freq', animated=True)
+    # Show the figure
+    fig.show()
 
-    ax_SLOW.set_ylim(-20, 250)
+
 
 #######################################################################################################################
 # Draw plots
 #######################################################################################################################
-    plt.legend()
 
-    plt.show(block=False)
+    # Pause to update the plot display
     plt.pause(0.1)
+
+    # Save the figure's background to optimize redrawing time for plot update
     bg = fig.canvas.copy_from_bbox(fig.bbox)
-    bg_SLOW = fig_SLOW.canvas.copy_from_bbox(fig_SLOW.bbox)
 
-    ax.draw_artist(ln)
-    ax.draw_artist(ln_filtered)
-    ax.draw_artist(ln_RMS)
-    ax.draw_artist(ln_MAV)
+    # Draw each line on its respective axis
+    for axi, lin in zip(ax, ln):
+        axi.draw_artist(lin)
 
-    ax_SLOW.draw_artist(ln_filtered_SLOW)
-    ax_SLOW.draw_artist(ln_RMS_SLOW)
-    ax_SLOW.draw_artist(ln_MAV_SLOW)
-    ax_SLOW.draw_artist(ln_RMS_SLOW_LARGE_FILTER)
-    ax_SLOW.draw_artist(ln_mean_freq_slow)
-
+    # Update the figure canvas with the new drawings
     fig.canvas.blit(fig.bbox)
-    fig_SLOW.canvas.blit(fig_SLOW.bbox)
 
 #######################################################################################################################
 # Prepare CSV File
 #######################################################################################################################
+    # Open the CSV file for writing
     csv_file = open('readings.csv', 'w')
+
+    # Create a CSV writer object
     writer = csv.writer(csv_file)
-    atexit.register(exit_csv_close)
 
+    # Register a function to close the CSV file on exit
+    atexit.register(lambda: exit_csv_close())
 
+    # Write the header row to the CSV file
     writer.writerow(['time', 'y'])
+
+    # Record the start time for later use
     start_time = time.time()
 
 #######################################################################################################################
 # Thread setup
 #######################################################################################################################
 
-
-
-    # Define a lock for synchronization
+    # Define a lock to synchronize access to shared resources
     data_lock = threading.Lock()
 
+    # Create and start a background thread to read data
     data_thread = threading.Thread(target=read_data, daemon=True)
     data_thread.start()
 
-
-
+#######################################################################################################################
+# Live plot update
+#######################################################################################################################
 
 
     while True:
+        # Restore the figure's background to prepare for redrawing
         fig.canvas.restore_region(bg)
-        fig_SLOW.canvas.restore_region(bg_SLOW)
 
-        ln.set_ydata(y)
-        ln_filtered.set_ydata(y_filtered)
-        ln_RMS.set_ydata(y_RMS)
-        ln_MAV.set_ydata(y_MAV)
-        ax.draw_artist(ln)
-        ax.draw_artist(ln_filtered)
-        ax.draw_artist(ln_RMS)
-        ax.draw_artist(ln_MAV)
+        # Update each line artist with new data and draw on its axis
+        for lin, y, axi in zip(ln, y_processed, ax):
+            lin.set_ydata(y)
+            axi.draw_artist(lin)
 
-        ln_filtered_SLOW.set_ydata(y_filtered_SLOW)
-        ln_RMS_SLOW.set_ydata(y_RMS_SLOW)
-        ln_RMS_SLOW_LARGE_FILTER.set_ydata(y_RMS_SLOW_LARGE_FILTER)
-        ln_MAV_SLOW.set_ydata(y_MAV_SLOW)
-        ax_SLOW.draw_artist(ln_filtered_SLOW)
-        ax_SLOW.draw_artist(ln_RMS_SLOW)
-        ax_SLOW.draw_artist(ln_RMS_SLOW_LARGE_FILTER)
-        ax_SLOW.draw_artist(ln_MAV_SLOW)
-        ax_SLOW.draw_artist(ln_mean_freq_slow)
-
-
-
+        # Refresh the canvas to show updated drawing
         fig.canvas.blit(fig.bbox)
         fig.canvas.flush_events()
 
-        fig_SLOW.canvas.blit(fig_SLOW.bbox)
-        fig_SLOW.canvas.flush_events()
 
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
