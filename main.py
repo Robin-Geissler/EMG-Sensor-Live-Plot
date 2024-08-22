@@ -56,7 +56,8 @@ def read_data():
             # Shift processed measurement vales one to the right
             y_processed = np.roll(y_processed, shift=1, axis=1)
             # Calculate dynamic offset over average of all currently saved data points
-            offset = np.round(np.sum(y_original[:, :data_points], axis=1) / data_points, 2)
+            offset = np.round(np.mean(y_original[:, :data_points], axis=1) , 2)
+
             # Offset measurement data
             y_processed[:,0] = y_original[:,0] - offset
 
