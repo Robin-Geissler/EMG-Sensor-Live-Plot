@@ -1,5 +1,5 @@
 # EMG Live Plotting
-This is a script for live visualization of EMG data in Python. It is to be used together with this multichannel EMG sensor: [Multichannel EMG Sensor](./../../../../emg-sensor_board)  
+This is a script for live visualization of EMG data in Python. It is to be used together with this multichannel EMG sensor: [Multichannel EMG Sensor](https://github.com/Robin-Geissler/EMG-Sensor-Board)  
 
 This script visualizes 8 channels simultaneously, and can easily be extended to more channels.
 ![Multichannel EMG Adapter](Figures/live_vis_signal.png "Live Visualisatioin Signal")
